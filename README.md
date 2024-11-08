@@ -1,40 +1,45 @@
-# OmniParser
+# FlowController Automation Framework
 
 ## Overview
 
-OmniParser is an advanced GUI automation tool that leverages state-of-the-art vision and natural language processing (NLP) models to interpret and interact with graphical user interfaces. Designed to automate tasks such as navigating web applications, controlling the mouse, and executing complex workflows, OmniParser serves as a robust solution for enhancing productivity and streamlining interactions with software interfaces.
+FlowController is a sophisticated automation framework designed to execute and manage complex tasks by orchestrating interactions between vision and natural language processing (NLP) agents. Leveraging advanced computer vision and NLP models, FlowController automates GUI-based workflows, enabling seamless interaction with applications through natural language commands and visual element detection.
 
 ## Features
 
-- **NLP-Based Mouse Control**: Interpret natural language commands to perform precise mouse movements and actions within applications.
-- **Vision Integration**: Utilize vision agents like Grounding DINO and Omniparser to detect and interpret UI elements from screenshots.
-- **Task Management**: Queue and process tasks efficiently with retry mechanisms and error handling.
-- **Modular Architecture**: Easily extend and customize components like agents and controllers to fit various automation needs.
+- **Task Orchestration**: Manage and execute a queue of tasks with retry mechanisms and error handling.
+- **NLP-Based Command Generation**: Interpret natural language inputs to generate precise mouse and keyboard commands.
+- **Vision Integration**: Utilize computer vision agents to detect and interpret UI elements from screenshots.
+- **Modular Architecture**: Easily extend and customize components such as agents and controllers to suit various automation needs.
+- **Graceful Shutdown**: Handles shutdown signals to ensure all ongoing tasks are properly completed or halted.
 - **Metrics and Logging**: Monitor task processing metrics and maintain detailed logs for debugging and performance analysis.
 
 ## Architecture
 
 The system is composed of several key components:
 
-### FlowController
+### Main Module (`main.py`)
+
+Serves as the entry point of the application. It initializes all necessary agents and controllers, sets up the environment, and starts the task processing loop.
+
+### FlowController (`controllers/flow_controller.py`)
 
 Handles the orchestration of tasks, manages the task queue, and oversees the interaction between vision and text agents to execute automated workflows.
 
-### NLPMouseController
+### NLPMouseController (`controllers/nlp_mouse_controller.py`)
 
 Processes NLP commands to control mouse movements and actions, enabling precise interaction with UI elements based on natural language inputs.
 
-### VisionAgent
+### VisionAgent (`agents/vision.py`)
 
-Utilizes models like Grounding DINO and Omniparser to detect and interpret UI elements from screen images, providing necessary data for task execution.
+Utilizes computer vision models to detect and interpret UI elements from screen images, providing necessary data for task execution.
 
-### TextAgent
+### TextAgent (`agents/text.py`)
 
 Generates actionable commands by interpreting text extracted from UI elements, facilitating seamless automation based on user-defined tasks.
 
-### Computer Modules
+### Computer Modules (`computer/`)
 
-Interfaces with system components such as the screen, mouse, and browser to capture screen images, execute mouse actions, and manage browser interactions.
+Interfaces with system components such as the screen, mouse, keyboard, and browser to capture screen images, execute mouse actions, type text, and manage browser interactions.
 
 ## Installation
 
@@ -48,8 +53,8 @@ Interfaces with system components such as the screen, mouse, and browser to capt
 
 1. **Clone the Repository**
     ```bash
-    git clone https://github.com/yourusername/OmniParser.git
-    cd OmniParser
+    git clone https://github.com/yourusername/FlowController.git
+    cd FlowController
     ```
 
 2. **Create and Activate Virtual Environment**
@@ -64,7 +69,7 @@ Interfaces with system components such as the screen, mouse, and browser to capt
     ```
 
 4. **Configure Models**
-    - Download and place the required vision and NLP models as specified in the `OmniParser` directory.
+    - Download and place the required vision and NLP models as specified in the `models/` directory.
     - Ensure that configuration files (`config.json`, `generation_config.json`, etc.) are correctly set up.
 
 ## Usage
@@ -90,7 +95,7 @@ The application listens for shutdown signals (`SIGINT`, `SIGTERM`) to terminate 
 
 ## Example Task: Join Agora Discord Voice Channel
 
-The FlowController automates the process of joining a Discord voice channel with the following steps:
+The `FlowController` automates the process of joining a Discord voice channel with the following steps:
 
 1. **Navigate to Discord Website**: Opens the Discord URL in the browser.
 2. **Login (If Necessary)**: Enters credentials to authenticate the user.
@@ -142,7 +147,7 @@ def _join_agora_discord_voice_channel(self) -> bool:
 
 ## Configuration
 
-Configuration files are located within their respective model directories under `OmniParser/`. Adjust the settings in these files to fine-tune the behavior of vision and text agents. Important configurations include model paths, token IDs, and generation parameters.
+Configuration files are located within their respective directories under `OmniParser/`. Adjust the settings in these files to fine-tune the behavior of vision and text agents. Important configurations include model paths, token IDs, and generation parameters.
 
 ## Contributing
 
@@ -172,7 +177,6 @@ This project is licensed under the MIT License and the GNU Affero General Public
 ## Acknowledgements
 
 - [Grounding DINO](https://github.com/IDEA-Research/GroundingDINO)
-- [OmniParser Project Page](https://microsoft.github.io/OmniParser/)
 - [BLIP-2 Models](https://huggingface.co/models?pipeline_tag=image-text-to-text)
 - [Pillow (PIL)](https://pillow.readthedocs.io/en/stable/)
 - [OpenCV](https://opencv.org/)
