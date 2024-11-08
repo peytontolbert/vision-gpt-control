@@ -1,0 +1,10 @@
+.env
+sam2/*
+__pycache__/*
+OmniParser/*
+OmniParser/
+*.pth
+*.pt
+*.pyc
+sam2/
+weights/*
