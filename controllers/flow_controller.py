@@ -10,6 +10,9 @@ import tempfile
 import os
 import re
 from controllers.nlp_mouse_controller import NLPMouseController
+from controllers.error_controller import ErrorController
+from agents.command_formatter import CommandFormatterAgent
+from agents.manager import ManagerAgent  # Add import for ManagerAgent
 
 class SpecificException(Exception):
     """Custom exception for specific errors in FlowController."""
@@ -22,11 +25,12 @@ class TaskProcessingError(Exception):
 
 
 class FlowController:
-    def __init__(self, vision_agent, text_agent, screen, mouse):
+    def __init__(self, vision_agent, text_agent, screen, mouse, command_formatter):
         self.vision_agent = vision_agent
         self.text_agent = text_agent
         self.screen = screen
         self.mouse = mouse
+        self.command_formatter = command_formatter
         self.task_queue = []
         self.queue_lock = threading.Lock()
         self.MAX_ITERATIONS = 5  # Maximum refinement attempts
@@ -40,22 +44,35 @@ class FlowController:
         self.shutdown_event = threading.Event()
         self.task_thread = None  # Initialize task_thread
         self.dead_letter_queue = []
+        self.total_tasks = 0  # Initialize total_tasks
 
         logging.debug(
             "FlowController initialized with vision_agent: %s, text_agent: %s, screen: %s, mouse: %s",
             self.vision_agent, self.text_agent, self.screen, self.mouse
         )
 
-        self.nlp_mouse_controller = NLPMouseController(mouse, screen, vision_agent, text_agent)
+        self.nlp_mouse_controller = NLPMouseController(
+            mouse, 
+            screen, 
+            vision_agent, 
+            text_agent, 
+            command_formatter
+        )
+        self.error_controller = ErrorController(
+            max_retries=5, 
+            initial_retry_delay=3, 
+            backoff_factor=2.0
+        )
 
     def add_task(self, task):
         with self.queue_lock:
             self.task_queue.append(task)
+            self.total_tasks += 1
         logging.info(f"Task added: {task}")
 
     def run_tasks(self):
         logging.info("Starting task processing thread.")
-        self.task_thread = threading.Thread(target=self._task_worker, daemon=False)  # Set daemon to False
+        self.task_thread = threading.Thread(target=self._task_worker, daemon=False)
         self.task_thread.start()
 
     def wait_for_completion(self):
@@ -71,10 +88,13 @@ class FlowController:
         while not self.shutdown_event.is_set():
             with self.queue_lock:
                 if not self.task_queue:
+                    # Check for shutdown condition here if implementing automatic shutdown
                     logging.info("No more tasks to process. Waiting for new tasks...")
                     time.sleep(1)
                     continue
                 task = self.task_queue.pop(0)
+                logging.debug(f"Task '{task}' popped from queue.")
+
             try:
                 logging.debug(f"Picked up task: {task} for processing.")
                 start_time = time.time()
@@ -83,12 +103,15 @@ class FlowController:
                 self._update_metrics(elapsed)
                 logging.info(f"Task '{task}' processed in {elapsed:.2f} seconds.")
                 self.metrics['tasks_processed'] += 1
+                logging.debug(f"Updated metrics: {self.metrics}")
             except TaskProcessingError as e:
                 self.metrics['tasks_failed'] += 1
                 logging.error(f"Task '{task}' failed after retries: {e}", exc_info=True)
+                logging.debug(f"Updated metrics after failure: {self.metrics}")
             except Exception as e:
                 self.metrics['tasks_failed'] += 1
                 logging.error(f"Unhandled exception for task '{task}': {e}", exc_info=True)
+                logging.debug(f"Updated metrics after unhandled exception: {self.metrics}")
         logging.debug("Task worker thread exiting.")
 
     def process_task_with_retries(self, task):
@@ -110,75 +133,64 @@ class FlowController:
         self.shutdown_event.set()
 
     def process_task(self, task):
-        logging.info(f"Processing task: {task}")
-        try:
-            # Capture current screen image
-            screen_image = self.screen.get_screen_image()
-            
-            # Step 1: Detect elements and add overlays
-            scene_result = self.vision_agent.understand_scene(image=screen_image, task=task)
-            
-            if scene_result['status'] != 'success':
-                logging.error(f"Failed to process task '{task}': {scene_result['message']}")
-                raise TaskProcessingError(scene_result['message'])
-            
-            # Add overlays to the screenshot
-            overlay_image = scene_result.get('overlay_image')
-            
-            # Save the annotated image and get the file path
-            annotated_image_path = self._save_annotated_image(overlay_image, "overlay_label")
-            
-            # Step 2: Generate and execute NLP commands iteratively
-            while True:
-                # Retrieve text results to generate command
-                command_response = scene_result.get('text_results')
-                if not command_response:
-                    logging.error("No command response received from TextAgent.")
-                    break  # Exit if no command is available
-                
-                # Format the TextAgent's response into a command
-                formatted_command = self.format_text_agent_response(command_response, annotated_image_path)
-                if not formatted_command:
-                    logging.error("Formatted command is invalid.")
-                    break  # Exit if the command is invalid
-                
-                # Execute the mouse command
-                success = self.nlp_mouse_controller.execute_command(formatted_command)
-                if not success:
-                    logging.error("Failed to execute command.")
-                    break  # Exit if command execution fails
-                
-                logging.debug(f"Executed command: {formatted_command}")
-                
-                # Verify if the task is complete
-                if self._is_task_complete():
-                    logging.info(f"Task '{task}' completed successfully.")
-                    break  # Exit the loop if task is complete
-                
-                # Optionally, capture a new screenshot and update scene_result for the next iteration
-                screen_image = self.screen.get_screen_image()
-                scene_result = self.vision_agent.understand_scene(image=screen_image, task=task)
-        
-        except TaskProcessingError as e:
-            self.metrics['tasks_failed'] += 1
-            logging.error(f"Task '{task}' failed: {e}")
-        except Exception as e:
-            self.metrics['tasks_failed'] += 1
-            logging.error(f"Unexpected error during task '{task}': {e}")
-            logging.debug(traceback.format_exc())
-    
-    def _is_task_complete(self) -> bool:
         """
-        Determine if the current task has been completed.
-        
+        Simplified task processing flow with enhanced logging, timeout handling, and action verification.
+        """
+        try:
+            # Step 1: Enhance image with object detection including mouse position
+            screen_image = self.screen.get_screen_image()
+            enhanced_image = self.vision_agent.enhance_with_object_detection(
+                screen_image, self.mouse.get_position()
+            )
+            
+            # Step 2: TextAgent decides the next mouse action
+            next_action = self.text_agent.decide_next_action(enhanced_image, self.mouse.get_position())
+            success = self.nlp_mouse_controller.execute_command(next_action)
+            logging.debug(f"Executed command: {next_action}")
+
+            if not success:
+                logging.error(f"Executing command '{next_action}' failed for task '{task}'.")
+                raise TaskProcessingError(f"Command execution failed.")
+
+            # Verify the action was successful
+            if not self._verify_action_success(task):
+                logging.error(f"Action '{next_action}' verification failed for task '{task}'.")
+                raise TaskProcessingError(f"Action verification failed.")
+
+            # Step 3: Review result
+            review = self.text_agent.review_result(
+                self.screen.get_screen_image(),
+                self.mouse.get_position()
+            )
+            logging.debug(f"Review result: {review}")
+
+            # Step 4: Decide next steps based on review
+            # For example, determine if the task is complete or needs further refinement
+            if self._is_task_complete(review):
+                logging.info(f"Task '{task}' completed successfully.")
+            else:
+                logging.info(f"Task '{task}' requires further actions.")
+                # Optionally, re-add the task or handle accordingly
+                
+        except Exception as e:
+            logging.error(f"Error processing task '{task}': {e}", exc_info=True)
+            raise
+
+    def _is_task_complete(self, review) -> bool:
+        """
+        Determines if the task is complete based on the review result.
+
+        Args:
+            review: The result from the TextAgent's review.
+
         Returns:
             bool: True if the task is complete, False otherwise.
         """
-        # Implement logic to verify task completion
-        # This could involve checking specific UI elements or system states
-        # For example:
-        # return self.vision_agent.check_completion_condition()
-        return True  # Placeholder implementation
+        # Implement logic to determine if the task is complete
+        # This is a placeholder and should be adjusted based on actual requirements
+        if "success" in review.lower():
+            return True
+        return False
 
     def _update_metrics(self, processing_time: float):
         """Update performance metrics."""
@@ -246,29 +258,57 @@ class FlowController:
     def _join_agora_discord_voice_channel(self) -> bool:
         """
         Steps to join the Agora Discord Voice Channel with enhanced vision capabilities.
+        Focuses on the "Continue in Browser" link and subsequent login steps.
         """
         try:
             logging.info("Starting task: Join Agora Discord Voice Channel")
             
             # Step 0: Click "Continue in Browser" link
             self._click_element("Continue in Browser")
+            logging.debug("Clicked 'Continue in Browser'")
             
-            # Step 1: Navigate to Discord URL
-            self._click_element("Navigate to Discord Website")
+            # Capture screenshot after clicking
+            screen_image = self.screen.get_screen_image()
+            logging.debug("Captured screenshot after clicking 'Continue in Browser'")
             
-            # Step 2: Login if necessary
-            if self.vision_agent.verify_element("login_page", timeout=10):
-                self._input_text("Enter Discord Username", "YourUsername")
-                self._input_text("Enter Discord Password", "YourPassword")
+            # Use TextAgent to determine if login is required
+            #next_action = self.text_agent.decide_next_action(screen_image, self.mouse.get_position())
+            #logging.info(f"TextAgent determined next action: {next_action}")
+            next_action = "login"
+            if "login" in next_action.lower():
+                logging.info("Login required. Initiating login process.")
+                
+                # Step 1: Enter Discord Username
+                username = self.get_discord_username()
+                self._input_text("Enter Discord Username", username)
+                logging.debug("Entered Discord username.")
+                
+                # Capture updated screenshot after entering username
+                screen_image = self.screen.get_screen_image()
+                
+                # Step 2: Enter Discord Password
+                password = self.get_discord_password()
+                self._input_text("Enter Discord Password", password)
+                logging.debug("Entered Discord password.")
+                
+                # Optionally, capture another screenshot after entering password
+                screen_image = self.screen.get_screen_image()
             
-            # Step 3: Navigate to Voice Channel
+            # Step 3: Navigate to Discord URL
+            self._click_element("Navigate to Agora Server on the left side")
+            logging.debug("Clicked 'Navigate to Discord Website'")
+            
+            # Step 4: Navigate to Agora Voice Channel
             self._click_element("Navigate to Agora Voice Channel")
+            logging.debug("Clicked 'Navigate to Agora Voice Channel'")
             
-            # Step 4: Join Voice Channel
+            # Step 5: Join Voice Channel
             self._click_element("Join Agora Voice Channel")
+            logging.debug("Clicked 'Join Agora Voice Channel'")
             
-            # Step 5: Verify Successful Joining
-            if not self.vision_agent.verify_element("joined_agora_voice", timeout=10):
+            # Step 6: Verify Successful Joining
+            screen_image = self.screen.get_screen_image()
+            if not self.vision_agent.verify_element(screen_image, "joined_agora_voice", timeout=10):
                 raise TaskProcessingError("Failed to join Agora Discord Voice Channel.")
             
             logging.info("Task 'Join Agora Discord Voice Channel' completed successfully.")
@@ -285,6 +325,7 @@ class FlowController:
     def _click_element(self, element_description: str):
         """
         Locate an element using VisionAgent, overlay bounding box, and perform a mouse click.
+        Ensures commands are machine-readable.
         """
         logging.info(f"Attempting to click element: {element_description}")
         screen_image = self.screen.get_screen_image()
@@ -300,11 +341,11 @@ class FlowController:
         # Overlay bounding box and coordinates on the image
         annotated_image = self._overlay_bounding_box(screen_image, bbox, element_description, center_x, center_y)
         
-        # Save or process the annotated image as needed
+        # Save the annotated image
         annotated_image_path = self._save_annotated_image(annotated_image, element_description)
         
-        # Use TextAgent's complete_task to interpret the annotated image and generate the command
-        command = self.text_agent.complete_task({
+        # Use TextAgent's generate_command to ensure machine-readable command
+        command = self.text_agent.generate_command({
             "image": annotated_image_path,
             "query": (
                 f"Generate a machine-readable command to move the mouse to the center of the '{element_description}' "
@@ -316,7 +357,7 @@ class FlowController:
             logging.error(f"Invalid command received from TextAgent: {command}")
             raise TaskProcessingError(f"Invalid command format: {command}")
         
-        logging.debug(f"Generated command from TextAgent: {command}")
+        print(f"Generated command from TextAgent: {command}")
         
         success = self.nlp_mouse_controller.execute_command(command)
         if not success:
@@ -502,4 +543,51 @@ class FlowController:
             "scroll down"
             # Add other valid commands as needed
         ]
+
+    def get_discord_username(self) -> str:
+        """Retrieve Discord username from secure storage."""
+        username = os.getenv("DISCORD_USERNAME")
+        if not username:
+            logging.error("Discord username not set in environment variables.")
+            raise ValueError("Discord username is not provided.")
+        return username
+
+    def get_discord_password(self) -> str:
+        """Retrieve Discord password from secure storage."""
+        password = os.getenv("DISCORD_PASSWORD")
+        if not password:
+            logging.error("Discord password not set in environment variables.")
+            raise ValueError("Discord password is not provided.")
+        return password
+
+    def _verify_action_success(self, task) -> bool:
+        """
+        Verifies whether the last executed action was successful.
+
+        Args:
+            task: The current task being processed.
+
+        Returns:
+            bool: True if the action was successful, False otherwise.
+        """
+        try:
+            expected_element = f"{task}_confirmation"
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                screen_image = self.screen.get_screen_image()
+                element_present = self.vision_agent.find_element(screen_image, expected_element)
+
+                if element_present:
+                    logging.info(f"Verified successful execution of task '{task}' on attempt {attempt}.")
+                    return True
+                else:
+                    logging.warning(f"Attempt {attempt}: Expected element '{expected_element}' not found.")
+                    time.sleep(1)  # Wait before retrying
+
+            logging.error(f"Failed to verify action success for task '{task}' after {max_attempts} attempts.")
+            return False
+
+        except Exception as e:
+            logging.error(f"Error during action verification for task '{task}': {e}")
+            return False
 

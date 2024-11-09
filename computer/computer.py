@@ -23,30 +23,31 @@ class Computer(multiprocessing.Process):
     def __init__(self):
         super().__init__()
         load_dotenv()  # Load environment variables from .env file
+        self.screen_container = None
+
+    def run(self):
+        # Initialize non-picklable objects here
+        load_dotenv()  # Load environment variables from .env file
         self.screen = Screen()
         self.audio = Audio()
         self.microphone = Microphone()
-        self.keyboard = Keyboard(target=self.screen)
         self.apps = {
             "browser": Browser(audio=self.audio, microphone=self.microphone, screen=self.screen),
             "discord": None  # Will be initialized after browser
         }
         self.mouse = Mouse(target=self.apps["browser"], screen=self.screen, movement_speed=1.0)
-
-        
+        self.keyboard = Keyboard(target=self.apps["browser"], screen=self.screen)
         # Initialize Discord with environment variables
         discord_user = os.getenv("DISCORD_USER")
         discord_pass = os.getenv("DISCORD_PASS")
         self.discord = Discord(browser=self.apps["browser"], username=discord_user, password=discord_pass)
         self.apps["discord"] = self.discord
-        
+
         # Start sending audio in a separate thread
         audio_stream_thread = threading.Thread(target=self.microphone.start_sending_audio, daemon=True)
         audio_stream_thread.start()
-        
-        self.screen_container = None
 
-    def run(self):
+        # Proceed with startup routines
         self.startup()
 
     def startup(self):
@@ -54,17 +55,6 @@ class Computer(multiprocessing.Process):
         Initializes all components of the computer environment.
         """
         try:
-            # Initialize core components
-            self.screen.initialize()
-            self.audio.initialize() 
-            self.microphone.initialize()
-            
-            # Position the mouse at the center of the screen
-            center_x = self.screen.width // 2
-            center_y = self.screen.height // 2
-            self.mouse.move_to(center_x, center_y, smooth=False)
-            logging.info(f"Mouse positioned at center: ({center_x}, {center_y})")
-            
             # Launch browser in container
             logging.info("Launching browser...")
             if not self.launch_app("browser"):
@@ -82,10 +72,17 @@ class Computer(multiprocessing.Process):
             # Launch Discord
             if not self.launch_app("discord"):
                 logging.error("Failed to launch Discord")
+            # Initialize core components
+            self.screen.initialize()
+            self.audio.initialize() 
+            self.microphone.initialize()
             
-            # Start input devices
-            self.mouse.start()
-            self.keyboard.start()
+            # Position the mouse at the center of the screen
+            center_x = self.screen.width // 2
+            center_y = self.screen.height // 2
+            self.mouse.move_to(center_x, center_y, smooth=False)
+            logging.info(f"Mouse positioned at center: ({center_x}, {center_y})")
+            
             
             # Initialize frame buffer for eyesight
             self.screen.frame_buffer = []
@@ -150,11 +147,11 @@ class Computer(multiprocessing.Process):
         Shuts down all components gracefully.
         """
         self.keyboard.stop()
-        self.mouse.stop()
         if self.screen_container:
             self.screen_container.terminate()
             self.screen_container.wait()
             logging.debug("Screen container stopped.")
+        self.mouse.stop()  # Ensure the mouse's keep-alive thread is stopped
         # ... existing shutdown code ...
 
     def get_system_state(self) -> Dict[str, Any]:

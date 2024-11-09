@@ -8,3 +8,12 @@ OmniParser/
 *.pyc
 sam2/
 weights/*
+
+# Ignore temporary files
+temp_*.png
+annotated_*.png
+*.tmp
+*.log
+
+# Ignore sensitive information
+credentials.json

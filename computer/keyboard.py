@@ -4,62 +4,84 @@ import logging
 
 class Keyboard:
     """
-    Simulates a keyboard for textual input.
-    Streams input at an average typing speed to the target application or screen.
+    Simulates keyboard controls with enhanced key press handling.
     """
-    def __init__(self, target, typing_speed=5):
-        """
-        Initializes the Keyboard.
-
-        :param target: The target application or screen to receive inputs.
-        :param typing_speed: Average typing speed in characters per second.
-        """
+    def __init__(self, target, screen):
         self.target = target
-        self.typing_speed = typing_speed  # characters per second
-        self.input_queue = []
-        self.running = False
-        self.thread = threading.Thread(target=self.process_queue, daemon=True)
-
-    def is_running(self):
-        """Check if keyboard thread is running."""
-        return hasattr(self, 'thread') and self.thread.is_alive()
-
-    def start(self):
-        """Start keyboard thread if not already running."""
-        if not self.is_running():
-            self.running = True
-            self.thread = threading.Thread(target=self.process_queue, daemon=True)
-            self.thread.start()
-        else:
-            logging.debug("Keyboard thread already running")
-
-    def stop(self):
+        self.screen = screen
+        self.current_keys = set()
+        self.position_lock = threading.Lock()
+        self.logger = logging.getLogger('keyboard')
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Initialize logging handlers if not present
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+    
+        # Removed queue and threading attributes
+        # self.action_queue = []
+        # self.queue_lock = threading.Lock()
+        # self.running = False
+        # self.thread = None
+    
+    def press_key(self, key: str) -> bool:
         """
-        Stops the keyboard input processing.
+        Press a key directly without queueing.
+        
+        Args:
+            key: The key to press
+            
+        Returns:
+            bool: True if key press was successful
         """
-        self.running = False
-        self.thread.join()
-        logging.debug("Keyboard input processing stopped.")
-
-    def send_input(self, text):
+        try:
+            self.target.press_key(key)
+            self.logger.debug(f"Key pressed: {key}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error pressing key '{key}': {e}")
+            return False
+    
+    def release_key(self, key: str) -> bool:
         """
-        Adds text to the input queue to be sent to the target.
-
-        :param text: The text to send.
+        Release a key directly without queueing.
+        
+        Args:
+            key: The key to release
+            
+        Returns:
+            bool: True if key release was successful
         """
-        self.input_queue.append(text)
-        logging.debug(f"Input added to queue: {text}")
-
-    def process_queue(self):
+        try:
+            self.target.release_key(key)
+            self.logger.debug(f"Key released: {key}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error releasing key '{key}': {e}")
+            return False
+    
+    def type_text(self, text: str) -> bool:
         """
-        Processes the input queue, sending inputs at the specified typing speed.
+        Types the given text using the keyboard.
+        
+        Args:
+            text (str): The text to type.
+        
+        Returns:
+            bool: True if typing was successful, False otherwise.
         """
-        while self.running:
-            if self.input_queue:
-                text = self.input_queue.pop(0)
-                for char in text:
-                    self.target.receive_input(char)
-                    logging.debug(f"Sent character: {char}")
-                    time.sleep(1 / self.typing_speed)
-            else:
-                time.sleep(0.1)  # Wait before checking the queue again
+        try:
+            for char in text:
+                self.press_key(char)
+                self.release_key(char)
+                time.sleep(0.05)  # Slight delay between key presses for reliability
+            self.logger.debug(f"Typed text: {text}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error typing text '{text}': {e}")
+            return False

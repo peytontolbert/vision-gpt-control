@@ -6,11 +6,12 @@ import numpy as np
 import time
 import cv2
 import threading
+from typing import Tuple
+import pyautogui
 
 class Screen:
     def __init__(self):
-        self.width = 800  # Match browser viewport
-        self.height = 600  # Match browser viewport
+        self.width, self.height = pyautogui.size()
         self.current_state = None
         self.ui_elements = []
         self.window = None
@@ -18,13 +19,15 @@ class Screen:
         self.current_frame = None
         self.mouse_position = (self.width // 2, self.height // 2)  # Initialize at center
         self.is_container = os.getenv("IS_CONTAINER", "False") == "True"
-        self.resolution = (800, 600)  # Match browser viewport
         self.frame_buffer = []
         self.frame_lock = threading.Lock()  # Add thread safety
         self.last_frame_time = time.time()  # Initialize to current time
         self.frame_count = 0
         self.fps = 0
         self._tk_ready = False
+        self.browser_frame = None
+        self.browser_frame_timestamp = 0
+        self.browser_sync_enabled = True
 
     def initialize(self):
         """
@@ -35,13 +38,13 @@ class Screen:
                 if not self._tk_ready:
                     self.window = tk.Tk()
                     self.window.title("Bob's View")
-                    self.window.geometry(f"{self.resolution[0]}x{self.resolution[1]}")
+                    self.window.geometry(f"{self.width}x{self.height}")
                     
                     # Create canvas for drawing
                     self.canvas = tk.Canvas(
                         self.window, 
-                        width=self.resolution[0], 
-                        height=self.resolution[1]
+                        width=self.width, 
+                        height=self.height
                     )
                     self.canvas.pack()
                     
@@ -89,32 +92,21 @@ class Screen:
 
     def update_frame(self, frame):
         """
-        Updates the current frame buffer with new screen content.
-        Thread-safe implementation.
-        
-        Args:
-            frame: numpy array or PIL Image representing the screen content
+        Updates the current frame with browser integration.
         """
         try:
             with self.frame_lock:
                 current_time = time.time()
-                time_diff = current_time - self.last_frame_time
                 
-                # Frame rate limit (e.g., 30 FPS)
-                if time_diff < 1/30:
-                    return  # Skip frame to maintain FPS
+                # Handle browser frame if available
+                if self.browser_sync_enabled and hasattr(self.browser, 'get_current_frame'):
+                    browser_frame = self.browser.get_current_frame()
+                    if browser_frame:
+                        self.browser_frame = browser_frame
+                        self.browser_frame_timestamp = current_time
+                        frame = browser_frame  # Use browser frame instead
                 
-                self.last_frame_time = current_time
-                
-                # Update frame count
-                self.frame_count += 1
-                
-                # Calculate FPS every second
-                if time_diff >= 1.0:
-                    self.fps = int(self.frame_count / time_diff)
-                    self.frame_count = 0
-                
-                # Validate and convert frame if needed
+                # Continue with normal frame processing
                 if frame is None:
                     logging.warning("Received None frame")
                     return
@@ -124,16 +116,11 @@ class Screen:
                 elif not isinstance(frame, Image.Image):
                     raise ValueError(f"Unsupported frame type: {type(frame)}")
 
-                # Ensure correct size
-                if frame.size != (self.width, self.height):
-                    frame = frame.resize((self.width, self.height), Image.Resampling.LANCZOS)
-
+                # Update current frame and buffer
                 self.current_frame = frame
-                
-                # Update frame buffer
                 self._update_frame_buffer(frame)
-                    
-                # Only try to update canvas if we're not in container mode
+                
+                # Update display if needed
                 if not self.is_container and self.canvas and self._tk_ready:
                     try:
                         photo = ImageTk.PhotoImage(frame)
@@ -167,28 +154,17 @@ class Screen:
 
     def get_current_frame(self):
         """
-        Returns the current frame in a consistent RGB PIL Image format.
+        Returns current frame with browser priority.
         """
         try:
+            # First try to get browser frame if enabled
+            if self.browser_sync_enabled and self.browser_frame:
+                if time.time() - self.browser_frame_timestamp < 1.0:  # Use if less than 1 second old
+                    return self.browser_frame
+            
+            # Fall back to normal frame handling
             if not self.current_frame:
-                # Create blank frame if none exists
-                blank = Image.new('RGB', (self.width, self.height), 'black')
-                return blank
-                
-            # If numpy array, convert to PIL Image
-            if isinstance(self.current_frame, np.ndarray):
-                if len(self.current_frame.shape) == 2:  # Grayscale
-                    return Image.fromarray(self.current_frame, 'L').convert('RGB')
-                elif len(self.current_frame.shape) == 3:
-                    if self.current_frame.shape[2] == 4:  # RGBA
-                        return Image.fromarray(self.current_frame, 'RGBA').convert('RGB')
-                    else:  # Assume BGR
-                        rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-                        return Image.fromarray(rgb)
-                        
-            # If already PIL Image, ensure RGB
-            elif isinstance(self.current_frame, Image.Image):
-                return self.current_frame.convert('RGB')
+                return Image.new('RGB', (self.width, self.height), 'black')
                 
             return self.current_frame
             
@@ -351,6 +327,7 @@ class Screen:
                 
             # Convert PIL Image to numpy array if needed
             if isinstance(current_frame, Image.Image):
+                current_frame.save("current_frame.png")
                 return np.array(current_frame)
                 
             return current_frame
@@ -379,3 +356,18 @@ class Screen:
         """
         self.mouse_position = position
         logging.debug(f"Mouse position updated to {self.mouse_position}")
+
+    def get_resolution(self) -> Tuple[int, int]:
+        """
+        Retrieve the screen resolution.
+
+        Returns:
+            Tuple[int, int]: Width and height of the screen in pixels.
+        """
+        try:
+            # Example using pyautogui
+            import pyautogui
+            return pyautogui.size()
+        except Exception as e:
+            logging.error(f"Error retrieving screen resolution: {e}")
+            return (800, 600)  # Fallback resolution

@@ -12,23 +12,38 @@ class Mouse:
         self.target = target
         self.screen = screen
         self.movement_speed = movement_speed
-        self.action_queue = []
-        self.running = False
-        self.thread = None
         self.current_position = (self.screen.width // 2, self.screen.height // 2)  # Initialize at center
         self.is_clicking = False
         self.last_click = None
         self.position_lock = threading.Lock()
-        self.queue_lock = threading.Lock()
         self.movement_tolerance = 2  # pixels
         
         # Movement constraints
         self.max_speed = 2000  # pixels per second
         self.min_move_time = 0.05  # minimum seconds for any movement
-        self.screen_bounds = (self.screen.width, self.screen.height)  # Updated to use screen dimensions
+        self.screen_bounds = (screen.width, screen.height)  # Update screen bounds to match the actual screen dimensions
         
         # Initialize logging
         self._setup_logging()
+
+        self.last_position = (self.screen.width // 2, self.screen.height // 2)
+
+        self.active = True  # Flag to control the keep-alive thread
+        self.keep_alive_thread = threading.Thread(target=self._keep_alive, daemon=True)
+        self.keep_alive_thread.start()
+
+        self.logger.debug(f"Screen dimensions: {self.screen.width}x{self.screen.height}")
+
+        # Add browser reference
+        self.browser = target
+        
+        # Initialize position tracking
+        self._position = (screen.width // 2, screen.height // 2)
+        self.current_position = self._position
+
+        # Add browser-specific tracking
+        self.browser_position = (self.screen.width // 2, self.screen.height // 2)
+        self.browser_sync_enabled = True
 
     def _setup_logging(self):
         """Configure logging for mouse actions"""
@@ -44,67 +59,50 @@ class Mouse:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
-    def start(self):
-        """Start mouse thread if not already running."""
-        if not self.is_running():
-            self.running = True
-            self.thread = threading.Thread(target=self.process_queue, daemon=True)
-            self.thread.start()
-            self.logger.info("Mouse thread started")
-        else:
-            self.logger.debug("Mouse thread already running")
-
-    def stop(self):
-        """Safely stop mouse thread."""
-        if self.is_running():
-            self.running = False
-            self.thread.join(timeout=1.0)
-            self.logger.info("Mouse thread stopped")
-
-    def is_running(self) -> bool:
-        """Check if mouse thread is running."""
-        return bool(self.thread and self.thread.is_alive())
-
     def move_to(self, x: float, y: float, smooth: bool = True) -> bool:
         """
-        Queue mouse movement with enhanced validation and smoothing.
-        
-        Args:
-            x: Target X coordinate
-            y: Target Y coordinate
-            smooth: Whether to use smooth movement
-            
-        Returns:
-            bool: True if movement was queued successfully
+        Execute mouse movement with improved browser synchronization.
         """
         try:
-            # Validate coordinates
-            if not self._validate_coordinates(x, y):
-                self.logger.warning(f"Invalid coordinates: ({x}, {y})")
-                return False
+            # Clamp coordinates to screen bounds
+            x = max(0, min(x, self.screen.width))
+            y = max(0, min(y, self.screen.height))
+            
+            start_pos = self.get_position()
+            
+            if smooth:
+                path = self._generate_movement_path(start_pos, (x, y), steps=30)
+                for px, py in path:
+                    # Update browser position first
+                    if self.browser_sync_enabled and hasattr(self.browser, 'move_mouse'):
+                        success = self.browser.move_mouse(int(px), int(py))
+                        if not success:
+                            self.logger.error(f"Browser mouse move failed at ({px}, {py})")
+                            return False
+                    
+                    # Then update internal position
+                    with self.position_lock:
+                        self._position = (px, py)
+                        self.current_position = (px, py)
+                        self.browser_position = (px, py)
+                        
+                    time.sleep(0.01 / self.movement_speed)
+            else:
+                # Direct movement
+                if self.browser_sync_enabled and hasattr(self.browser, 'move_mouse'):
+                    success = self.browser.move_mouse(int(x), int(y))
+                    if not success:
+                        return False
+                
+                with self.position_lock:
+                    self._position = (x, y)
+                    self.current_position = (x, y)
+                    self.browser_position = (x, y)
 
-            # Round coordinates to integers to avoid floating point issues
-            x = round(x)
-            y = round(y)
-
-            with self.queue_lock:
-                if smooth:
-                    # Generate smooth movement path with more points for precision
-                    path = self._generate_movement_path(
-                        self.current_position, 
-                        (x, y),
-                        steps=30  # Increased steps for smoother movement
-                    )
-                    for px, py in path:
-                        self.action_queue.append(('move', round(px), round(py)))
-                else:
-                    self.action_queue.append(('move', x, y))
-
-            self.logger.debug(f"Movement to ({x}, {y}) queued successfully.")
             return True
 
         except Exception as e:
-            self.logger.error(f"Error queueing movement: {e}")
+            self.logger.error(f"Error moving mouse: {e}")
             return False
 
     def _generate_movement_path(
@@ -128,7 +126,7 @@ class Mouse:
 
     def _validate_coordinates(self, x: float, y: float) -> bool:
         """
-        Validate coordinates are within screen bounds.
+        Validate coordinates are within viewport bounds.
         """
         return (0 <= x <= self.screen_bounds[0] and 
                 0 <= y <= self.screen_bounds[1])
@@ -151,88 +149,72 @@ class Mouse:
 
     def get_position(self) -> Tuple[float, float]:
         """
-        Thread-safe method to get current mouse position.
-        
-        Returns:
-            Tuple[float, float]: Current (x, y) coordinates
+        Get current mouse position with browser sync.
         """
         with self.position_lock:
-            return self.current_position
-
-    def process_queue(self):
-        """
-        Process queued mouse actions with improved timing and verification.
-        """
-        while self.running:
-            try:
-                action = None
-                with self.queue_lock:
-                    if self.action_queue:
-                        action = self.action_queue.pop(0)
-
-                if action:
-                    action_type = action[0]
-                    
-                    if action_type == 'move':
-                        _, x, y = action
-                        self._update_position(x, y)
-                        # Add small delay based on movement speed
-                        time.sleep(0.005 / self.movement_speed)
-                        
-                    elif action_type == 'click':
-                        _, button = action
-                        self.target.click_mouse(button)
-                        time.sleep(0.05)  # Click timing delay
-                        
-                    elif action_type == 'delay':
-                        delay_time = action[1]
-                        time.sleep(delay_time)
-                else:
-                    time.sleep(0.005)
-
-            except Exception as e:
-                self.logger.error(f"Error processing mouse action: {e}")
-                time.sleep(0.1)
+            if self.browser_sync_enabled and hasattr(self.browser, 'get_mouse_position'):
+                browser_pos = self.browser.get_mouse_position()
+                if browser_pos:
+                    self.browser_position = browser_pos
+                    self._position = browser_pos
+                    self.current_position = browser_pos
+            return self._position
 
     def click(self, button: str = 'left', double: bool = False) -> bool:
         """
-        Perform mouse click action.
-        
-        Args:
-            button: Which mouse button to click ('left' or 'right')
-            double: Whether to perform a double click
+        Enhanced click with browser synchronization.
         """
         try:
-            with self.queue_lock:
-                self.action_queue.append(('click', button))
-                if double:
-                    # Add a delay and another click for double-click
-                    self.action_queue.append(('delay', 0.1))
-                    self.action_queue.append(('click', button))
+            # Ensure browser position is synced before clicking
+            if self.browser_sync_enabled:
+                current_pos = self.get_position()
+                if hasattr(self.browser, 'move_mouse'):
+                    self.browser.move_mouse(*current_pos)
+                
+                # Execute click through browser
+                if hasattr(self.browser, 'click_mouse'):
+                    success = self.browser.click_mouse(button)
+                    if not success:
+                        self.logger.error("Browser click failed")
+                        return False
                     
-            self.last_click = {
-                'button': button,
-                'time': time.time(),
-                'position': self.current_position,
-                'double': double
-            }
-                    
+                    if double:
+                        time.sleep(0.1)
+                        success = self.browser.click_mouse(button)
+                        if not success:
+                            return False
+
             self.logger.debug(
-                f"{'Double ' if double else ''}Click queued at {self.current_position}"
+                f"{'Double ' if double else ''}Click executed at {self.get_position()}"
             )
-                    
             return True
-                    
+                
         except Exception as e:
-            self.logger.error(f"Error queueing click: {e}")
+            self.logger.error(f"Error executing click: {e}")
             return False
 
     def initialize(self):
         """
         Additional initialization if needed.
         """
-        # Ensure the mouse starts at the center
+        # Ensure the mouse starts at the center of the screen
         center_x = self.screen.width // 2
         center_y = self.screen.height // 2
         self.move_to(center_x, center_y, smooth=False)
         self.logger.info(f"Mouse initialized at center: ({center_x}, {center_y})")
+
+    def _keep_alive(self):
+        """Background thread to ensure mouse remains active."""
+        while self.active:
+            try:
+                # Perform a lightweight action to keep the mouse active
+                self.target.move_mouse(*self.current_position)
+                time.sleep(30)  # Interval can be adjusted as needed
+            except Exception as e:
+                self.logger.error(f"Keep-alive failed: {e}")
+                # Optionally, implement reinitialization logic here
+
+    def stop(self):
+        """Stop the mouse and its keep-alive thread."""
+        self.active = False
+        self.keep_alive_thread.join()

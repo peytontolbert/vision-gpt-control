@@ -570,8 +570,10 @@ Remember to be precise with coordinate values and ensure they define a valid bou
             # Process image to correct format
             processed_image = self._validate_and_process_image(image)
             
-            # Use OmniParser to detect elements
-            annotations = self.omniparser.detect_elements(processed_image, query=target_description)
+            # Updated to focus on "Continue in Browser" link
+            annotations = self.omniparser.detect_elements(
+                processed_image, query="Continue in Browser"
+            )
             
             if annotations['status'] == 'success':
                 # Add mouse overlay
@@ -580,7 +582,7 @@ Remember to be precise with coordinate values and ensure they define a valid bou
                 # Utilize TextAgent to interpret annotated image and generate command
                 command = self.text_agent.complete_task({
                     "image": overlay_image,
-                    "query": f"Move the mouse to the center of the '{target_description}' element and perform a click action."
+                    "query": "Move the mouse to the center of the 'Continue in Browser' element and perform a click action."
                 })
                 
                 # Extract coordinates from command if available
@@ -591,7 +593,7 @@ Remember to be precise with coordinate values and ensure they define a valid bou
                     element_dict = {
                         'type': 'ui_element',
                         'coordinates': (x, y),
-                        'description': target_description
+                        'description': "Continue in Browser"
                     }
                     return {
                         'element_found': True,
@@ -740,3 +742,59 @@ Remember to be precise with coordinate values and ensure they define a valid bou
         elif not isinstance(image, Image.Image):
             raise ValueError(f"Unsupported image type: {type(image)}")
         return image
+
+    def enhance_with_object_detection(self, image, mouse_position):
+        """
+        Enhance the image with object detection annotations, including mouse position.
+        
+        Args:
+            image (numpy.ndarray): The image to process.
+            mouse_position (Tuple[int, int]): Current (x, y) position of the mouse.
+        
+        Returns:
+            numpy.ndarray: The enhanced image with object detection annotations.
+        """
+        # Perform object detection
+        detected_objects = self.detect_objects(image)
+        
+        # Draw bounding boxes around detected objects
+        for obj in detected_objects:
+            self.draw_bounding_box(image, obj['bbox'], obj['label'])
+        
+        # Overlay mouse position
+        if mouse_position:
+            x, y = mouse_position
+            cv2.circle(image, (x, y), 5, (0, 255, 0), -1)  # Green circle at mouse position
+        
+        return image
+
+    def detect_objects(self, image):
+        """
+        Detect objects in the given image.
+        
+        Args:
+            image (numpy.ndarray): The image to process.
+        
+        Returns:
+            List[dict]: A list of detected objects with bounding boxes and labels.
+        """
+        # Placeholder for object detection implementation
+        # Replace with actual object detection logic (e.g., using OpenCV, YOLO, etc.)
+        detected_objects = []
+        # Example detected object format:
+        # detected_objects.append({'bbox': (x1, y1, x2, y2), 'label': 'object_label'})
+        return detected_objects
+
+    def draw_bounding_box(self, image, bbox, label):
+        """
+        Draw a bounding box and label on the image.
+        
+        Args:
+            image (numpy.ndarray): The image to annotate.
+            bbox (Tuple[int, int, int, int]): Bounding box coordinates (x1, y1, x2, y2).
+            label (str): Label for the bounding box.
+        """
+        x1, y1, x2, y2 = bbox
+        cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)  # Blue bounding box
+        cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 0, 0), 2)
