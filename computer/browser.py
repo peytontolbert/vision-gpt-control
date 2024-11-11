@@ -1,217 +1,114 @@
-import logging
 from selenium import webdriver
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
+from selenium.webdriver.edge.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from PIL import Image
-import io
-import threading
 import time
-from typing import Tuple, Optional
+from PIL import Image, ImageDraw
+import os
 
-class Browser:
-    """
-    A class to handle Selenium browser operations including mouse, keyboard, and viewport management.
-    """
-    
-    def __init__(self, headless: bool = True, window_size: Tuple[int, int] = (800, 600)):
-        self.webdriver: Optional[webdriver.Edge] = None
-        self.actions: Optional[ActionChains] = None
-        self.wait: Optional[WebDriverWait] = None
-        self._window_size = window_size
-        self._headless = headless
-        self._default_timeout = 10
+class BrowserController:
+    def __init__(self, window_width=800, window_height=600):
+        # Configure Edge WebDriver
+        edge_options = Options()
+        edge_options.add_argument(f"--window-size={window_width},{window_height}")
+        self.driver = webdriver.Edge(options=edge_options)
         
-        # Screen capture settings
-        self.is_capturing = False
-        self.capture_thread = None
-        self.current_frame = None
-        self.target_fps = 30
+        # Wait for the browser to open
+        time.sleep(2)
         
-        # Mouse position tracking
-        self._mouse_position = (0, 0)
-        self._mouse_position_lock = threading.Lock()
+        # Get the actual window dimensions (for accurate mouse movements)
+        self.window_width = self.driver.execute_script("return window.innerWidth")
+        self.window_height = self.driver.execute_script("return window.innerHeight")
+        self.actions = ActionChains(self.driver)
+        self.last_mouse_position = None  # Initialize mouse position tracking
         
-        self.logger = logging.getLogger(__name__)
+        print(f"Initialized browser with dimensions: {self.window_width}x{self.window_height}")
 
-    def launch(self) -> bool:
-        """Launches the browser with configured options."""
+    def navigate(self, url):
+        """Navigate to a specified URL."""
+        self.driver.get(url)
+        print(f"Navigated to {url}")
+        time.sleep(2)  # Wait for the page to load
+
+    def locate_element_by_text(self, text):
+        """Locate an element by link text and return its center coordinates."""
         try:
-            options = Options()
-            options.use_chromium = True
-            options.add_argument("--no-sandbox")
-            options.add_argument(f"--window-size={self._window_size[0]},{self._window_size[1]}")
-            options.add_argument("--disable-dev-shm-usage")
-            options.headless = self._headless
-            
-            self.webdriver = webdriver.Edge(options=options)
-            self.actions = ActionChains(self.webdriver)
-            self.wait = WebDriverWait(self.webdriver, self._default_timeout)
-            
-            # Start screen capture
-            self.is_capturing = True
-            self._start_screen_capture()
-            
-            self.logger.info("Browser launched successfully")
-            return True
-            
+            element = self.driver.find_element(By.LINK_TEXT, text)
+            location = element.location
+            size = element.size
+            # Calculate center coordinates within the browser
+            center_x = location['x'] + (size['width'] / 2)
+            center_y = location['y'] + (size['height'] / 2)
+            print(f"Located element '{text}' at ({center_x}, {center_y})")
+            return center_x, center_y
         except Exception as e:
-            self.logger.error(f"Failed to launch browser: {e}")
-            self.close()
-            return False
+            print(f"Error locating element by text '{text}': {e}")
+            return None, None
 
-    def _start_screen_capture(self):
-        """Starts the screen capture thread."""
-        def capture_loop():
-            frame_interval = 1.0 / self.target_fps
-            
-            while self.is_capturing:
-                try:
-                    if not self.webdriver:
-                        break
-                        
-                    screenshot = self.webdriver.get_screenshot_as_png()
-                    self.current_frame = Image.open(io.BytesIO(screenshot)).convert('RGB')
-                    time.sleep(frame_interval)
-                    
-                except Exception as e:
-                    self.logger.error(f"Screen capture error: {e}")
-                    time.sleep(0.1)
-            
-        self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
-        self.capture_thread.start()
+    def move_mouse_to(self, x, y):
+        """Move the virtual mouse to the specified coordinates within the browser."""
+        if 0 <= x <= self.window_width and 0 <= y <= self.window_height:
+            # Move to the coordinates within the browser window
+            self.actions.move_by_offset(x, y).perform()
+            self.last_mouse_position = (x, y)
+            print(f" window dimensions: {self.window_width}x{self.window_height}")
+            self.take_screenshot(f"screenshot_{x}_{y}.png")
+            print(f"Moved mouse to ({x}, {y}) within the browser window.")
+            self.last_mouse_position = (x, y)  # Update mouse position
+        else:
+            print(f"Coordinates ({x}, {y}) are out of browser bounds.")
 
-    # Navigation methods
-    def navigate(self, url: str) -> bool:
-        """Navigates to the specified URL."""
+    def click_at(self, x, y):
+        """Move the virtual mouse to (x, y) and perform a click."""
+        self.move_mouse_to(x, y)
+        self.actions.click().perform()
+        print(f"Clicked at ({x}, {y}) within the browser window.")
+
+    def take_screenshot(self, filename="screenshot.png"):
+        """Take a screenshot of the browser, save it, and overlay the coordinate system and mouse position."""
+        # Take a screenshot using WebDriver
+        self.driver.save_screenshot(filename)
+        print(f"Screenshot saved as {filename}")
+
         try:
-            self.webdriver.get(url)
-            return True
+            # Open the screenshot and prepare for drawing
+            image = Image.open(filename)
+            draw = ImageDraw.Draw(image)
+
+            # Draw grid lines for the coordinate system
+            grid_spacing = 50  # distance in pixels between each grid line
+
+            # Draw vertical grid lines
+            for x in range(0, self.window_width, grid_spacing):
+                line_color = (150, 150, 150)  # light gray color for grid lines
+                draw.line((x, 0, x, self.window_height), fill=line_color, width=1)
+                draw.text((x + 2, 2), str(x), fill="black")  # Label the x-axis coordinates
+
+            # Draw horizontal grid lines
+            for y in range(0, self.window_height, grid_spacing):
+                draw.line((0, y, self.window_width, y), fill=line_color, width=1)
+                draw.text((2, y + 2), str(y), fill="black")  # Label the y-axis coordinates
+
+            # Overlay the mouse position if available
+            if self.last_mouse_position:
+                mouse_x, mouse_y = self.last_mouse_position
+                mouse_size = 10  # Size of the mouse cursor overlay
+                # Draw a red circle at the mouse position
+                draw.ellipse(
+                    (mouse_x - mouse_size, mouse_y - mouse_size, mouse_x + mouse_size, mouse_y + mouse_size),
+                    fill='red',
+                    outline='black'
+                )
+                print(f"Mouse overlay added at ({mouse_x}, {mouse_y})")
+
+            # Save the image with the coordinate overlay
+            image.save(filename)
+            print(f"Coordinate grid and mouse overlay added to {filename}")
         except Exception as e:
-            self.logger.error(f"Navigation failed: {e}")
-            return False
-
-    def wait_until_loaded(self, timeout: Optional[int] = None) -> bool:
-        """Waits for page to finish loading."""
-        try:
-            timeout = timeout or self._default_timeout
-            self.wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
-            return True
-        except TimeoutException:
-            return False
-
-    # Mouse control methods
-    def move_mouse(self, x: int, y: int) -> bool:
-        """Moves mouse to specified coordinates."""
-        try:
-            current_x, current_y = self._mouse_position
-            delta_x = x - current_x
-            delta_y = y - current_y
-            
-            self.actions.move_by_offset(delta_x, delta_y).perform()
-            
-            with self._mouse_position_lock:
-                self._mouse_position = (x, y)
-            
-            self.actions = ActionChains(self.webdriver)  # Reset actions
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Mouse movement failed: {e}")
-            return False
-
-    def click_mouse(self, button: str = 'left') -> bool:
-        """Performs mouse click."""
-        try:
-            if button == 'left':
-                self.actions.click()
-            elif button == 'right':
-                self.actions.context_click()
-            elif button == 'middle':
-                self.actions.middle_click()
-            else:
-                return False
-                
-            self.actions.perform()
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Mouse click failed: {e}")
-            return False
-
-    # Keyboard control methods
-    def type_text(self, text: str) -> bool:
-        """Types the specified text."""
-        try:
-            self.actions.send_keys(text).perform()
-            return True
-        except Exception as e:
-            self.logger.error(f"Text input failed: {e}")
-            return False
-
-    def press_key(self, key: str) -> bool:
-        """Presses the specified key."""
-        try:
-            self.actions.key_down(key).perform()
-            return True
-        except Exception as e:
-            self.logger.error(f"Key press failed: {e}")
-            return False
-
-    def release_key(self, key: str) -> bool:
-        """Releases the specified key."""
-        try:
-            self.actions.key_up(key).perform()
-            return True
-        except Exception as e:
-            self.logger.error(f"Key release failed: {e}")
-            return False
-
-    # Element interaction methods
-    def find_element(self, selector: str, timeout: Optional[int] = None):
-        """Finds element using CSS selector."""
-        try:
-            timeout = timeout or self._default_timeout
-            return self.wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-            )
-        except Exception:
-            return None
-
-    def is_field_active(self, field_id: str) -> bool:
-        """Checks if input field is active."""
-        try:
-            return self.webdriver.execute_script(
-                f"return document.activeElement.id === '{field_id}';"
-            )
-        except Exception as e:
-            self.logger.error(f"Field check failed: {e}")
-            return False
-
-    # Viewport methods
-    def get_window_rect(self) -> Tuple[int, int, int, int]:
-        """Returns the browser window rectangle."""
-        try:
-            size = self.webdriver.get_window_size()
-            pos = self.webdriver.get_window_position()
-            return (pos['x'], pos['y'], size['width'], size['height'])
-        except Exception:
-            return (0, 0, self._window_size[0], self._window_size[1])
-
-    def get_current_frame(self) -> Optional[Image.Image]:
-        """Returns the current browser frame."""
-        return self.current_frame
+            print(f"Error overlaying coordinate system on screenshot: {e}")
 
     def close(self):
-        """Closes the browser and cleanup resources."""
-        self.is_capturing = False
-        if self.capture_thread:
-            self.capture_thread.join(timeout=1.0)
-        if self.webdriver:
-            try:
-                self.webdriver.quit()
-            except Exception as e:
-                self.logger.error(f"Browser close failed: {e}")
+        """Close the browser."""
+        self.driver.quit()
+        print("Browser closed.")
+

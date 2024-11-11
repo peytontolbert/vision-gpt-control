@@ -5,71 +5,120 @@ import logging
 
 class Overlay:
     def __init__(self):
-        pass
+        # Define standard sizes
+        self.VIEWPORT_WIDTH = 976
+        self.VIEWPORT_HEIGHT = 732
+        self.SCREENSHOT_WIDTH = 952
+        self.SCREENSHOT_HEIGHT = 596
 
-    def add_coordinate_system(self, image: np.ndarray, screen_width: int, screen_height: int) -> np.ndarray:
+    def add_coordinate_system(self, image: np.ndarray, screen_width: int = None, screen_height: int = None) -> np.ndarray:
         """
-        Adds a coordinate system overlay with numbered annotations to the image based on screen size.
+        Adds a coordinate system overlay calibrated to browser viewport coordinates.
 
         Args:
-            image (np.ndarray): The original image.
-            screen_width (int): Width of the screen in pixels.
-            screen_height (int): Height of the screen in pixels.
+            image (np.ndarray): The original image (screenshot).
+            screen_width (int): Optional override for viewport width.
+            screen_height (int): Optional override for viewport height.
 
         Returns:
             np.ndarray: The image with the coordinate system and numbers overlay.
         """
         try:
-            # Ensure image dimensions match screen dimensions
-            overlay_image = cv2.resize(image.copy(), (screen_width, screen_height))
+            # Use viewport dimensions for coordinate system
+            viewport_width = screen_width or self.VIEWPORT_WIDTH
+            viewport_height = screen_height or self.VIEWPORT_HEIGHT
             
-            # Create semi-transparent overlay
+            # Scale factor between screenshot and viewport
+            scale_x = viewport_width / self.SCREENSHOT_WIDTH
+            scale_y = viewport_height / self.SCREENSHOT_HEIGHT
+            
+            # Create overlay on screenshot size
+            overlay_image = image.copy()
             overlay = overlay_image.copy()
             
-            # Determine grid size based on screen dimensions (e.g., 10x10 grid)
-            num_columns = 10
-            num_rows = 10
-            grid_size_x = screen_width // num_columns
-            grid_size_y = screen_height // num_rows
+            # Calculate grid intervals (show every 100 pixels of viewport)
+            grid_interval_x = int(100 / scale_x)
+            grid_interval_y = int(100 / scale_y)
+            
+            # Draw vertical lines and numbers
+            for x in range(0, self.SCREENSHOT_WIDTH, grid_interval_x):
+                # Calculate viewport coordinate
+                viewport_x = int(x * scale_x)
+                
+                # Draw line
+                cv2.line(overlay, (x, 0), (x, self.SCREENSHOT_HEIGHT), (0, 0, 0), 1)
+                
+                # Add coordinate label
+                if viewport_x < viewport_width:  # Only show if within viewport
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    text = str(viewport_x)
+                    font_scale = 0.5
+                    thickness = 2
+                    
+                    # Background box
+                    (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+                    cv2.rectangle(overlay,
+                                (x + 2, 5),
+                                (x + text_width + 8, 25),
+                                (0, 0, 0),
+                                -1)
+                    
+                    # Text
+                    cv2.putText(overlay,
+                              text,
+                              (x + 5, 20),
+                              font,
+                              font_scale,
+                              (255, 255, 255),
+                              thickness,
+                              cv2.LINE_AA)
 
-            # Draw vertical grid lines and add numbers at the top
-            for idx, x in enumerate(range(0, screen_width, grid_size_x)):
-                cv2.line(overlay, (x, 0), (x, screen_height), (255, 0, 0), 1)
-                # Add coordinate numbers with increased size
-                cv2.putText(
-                    overlay,
-                    str(x),
-                    (x + 5, 50),  # Moved down for better visibility
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1.0,  # Increased font size from 0.4 to 1.0
-                    (0, 255, 255),  # Yellow color
-                    2,  # Increased thickness from 1 to 2
-                    cv2.LINE_AA
-                )
+            # Draw horizontal lines and numbers
+            for y in range(0, self.SCREENSHOT_HEIGHT, grid_interval_y):
+                # Calculate viewport coordinate
+                viewport_y = int(y * scale_y)
+                
+                # Draw line
+                cv2.line(overlay, (0, y), (self.SCREENSHOT_WIDTH, y), (0, 0, 0), 1)
+                
+                # Add coordinate label
+                if viewport_y < viewport_height:  # Only show if within viewport
+                    text = str(viewport_y)
+                    (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+                    
+                    # Background box
+                    cv2.rectangle(overlay,
+                                (5, y + 2),
+                                (text_width + 15, y + 22),
+                                (0, 0, 0),
+                                -1)
+                    
+                    # Text
+                    cv2.putText(overlay,
+                              text,
+                              (8, y + 17),
+                              font,
+                              font_scale,
+                              (255, 255, 255),
+                              thickness,
+                              cv2.LINE_AA)
 
-            # Draw horizontal grid lines and add numbers on the left
-            for idx, y in enumerate(range(0, screen_height, grid_size_y)):
-                cv2.line(overlay, (0, y), (screen_width, y), (255, 0, 0), 1)
-                cv2.putText(
-                    overlay,
-                    str(y),
-                    (10, y + 35),  # Adjusted position for better visibility
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1.0,  # Increased font size from 0.4 to 1.0
-                    (0, 255, 255),  # Yellow color
-                    2,  # Increased thickness from 1 to 2
-                    cv2.LINE_AA
-                )
+            # Blend overlay with original image
+            alpha = 0.7
+            result = cv2.addWeighted(overlay_image, alpha, overlay, 1 - alpha, 0)
 
-            # Add final boundary lines
-            cv2.line(overlay, (screen_width - 1, 0), (screen_width - 1, screen_height), (255, 0, 0), 1)
-            cv2.line(overlay, (0, screen_height - 1), (screen_width, screen_height - 1), (255, 0, 0), 1)
+            # Add scale information
+            scale_text = f"Viewport: {viewport_width}x{viewport_height} | Screenshot: {self.SCREENSHOT_WIDTH}x{self.SCREENSHOT_HEIGHT}"
+            cv2.putText(result,
+                       scale_text,
+                       (10, self.SCREENSHOT_HEIGHT - 10),
+                       font,
+                       0.5,
+                       (0, 0, 0),
+                       1,
+                       cv2.LINE_AA)
 
-            # Blend the overlay with the original image
-            alpha = 0.7  # Transparency factor
-            overlay_image = cv2.addWeighted(overlay_image, alpha, overlay, 1 - alpha, 0)
-
-            return overlay_image
+            return result
         except Exception as e:
             logging.error(f"Error adding coordinate system overlay: {e}")
             return image
@@ -94,31 +143,36 @@ class Overlay:
 
     def annotate_mouse_position(self, overlay_image: np.ndarray, mouse_position: tuple) -> np.ndarray:
         """
-        Annotates the overlay image with the current mouse position.
+        Annotates the overlay image with the current mouse position, accounting for viewport scaling.
         
         Args:
             overlay_image (np.ndarray): The image to annotate.
-            mouse_position (tuple): The (x, y) position of the mouse.
+            mouse_position (tuple): The (x, y) position in viewport coordinates.
         
         Returns:
             np.ndarray: The annotated image.
         """
         try:
-            actual_position = (mouse_position[0], mouse_position[1])
-
-            # Draw a more visible cursor indicator
-            cv2.circle(overlay_image, actual_position, radius=5, color=(0, 255, 0), thickness=2)  # Outline
-            cv2.circle(overlay_image, actual_position, radius=2, color=(0, 255, 0), thickness=-1)  # Filled center
+            # Convert viewport coordinates to screenshot coordinates
+            scale_x = self.SCREENSHOT_WIDTH / self.VIEWPORT_WIDTH
+            scale_y = self.SCREENSHOT_HEIGHT / self.VIEWPORT_HEIGHT
             
-            # Add position text with better visibility
-            text = f"Mouse: ({mouse_position[0]}, {mouse_position[1]})"
+            screen_x = int(mouse_position[0] * scale_x)
+            screen_y = int(mouse_position[1] * scale_y)
+            
+            # Draw cursor indicator
+            cv2.circle(overlay_image, (screen_x, screen_y), 5, (255, 0, 0), 2)  # Blue outline
+            cv2.circle(overlay_image, (screen_x, screen_y), 2, (255, 0, 0), -1)  # Blue center
+            
+            # Add position text showing both coordinate systems
+            text = f"Viewport: ({mouse_position[0]}, {mouse_position[1]}) | Screen: ({screen_x}, {screen_y})"
             cv2.putText(
                 overlay_image,
                 text,
-                (actual_position[0] + 10, actual_position[1] - 10),  # Adjusted position
+                (screen_x + 10, screen_y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                (0, 255, 0),  # Green color
+                (255, 0, 0),
                 1,
                 cv2.LINE_AA
             )
@@ -130,32 +184,51 @@ class Overlay:
 
     def annotate_failed_attempt(self, overlay_image: np.ndarray, position: tuple) -> np.ndarray:
         """
-        Annotates a failed attempt position with an X on the image.
+        Annotates a failed attempt position with an X on the image, accounting for viewport scaling.
         
         Args:
             overlay_image (np.ndarray): The image to annotate.
-            position (tuple): The (x, y) position of the failed attempt.
+            position (tuple): The (x, y) position of the failed attempt in viewport coordinates.
         
         Returns:
             np.ndarray: The annotated image.
         """
         try:
-            x, y = position
+            # Convert viewport coordinates to screenshot coordinates
+            scale_x = self.SCREENSHOT_WIDTH / self.VIEWPORT_WIDTH
+            scale_y = self.SCREENSHOT_HEIGHT / self.VIEWPORT_HEIGHT
+            
+            screen_x = int(position[0] * scale_x)
+            screen_y = int(position[1] * scale_y)
+            
             size = 10  # Size of the X
             color = (0, 0, 255)  # Red color for X
             thickness = 2
             
-            # Draw the X
+            # Draw the X using screen coordinates
             cv2.line(overlay_image, 
-                     (x - size, y - size), 
-                     (x + size, y + size), 
+                     (screen_x - size, screen_y - size), 
+                     (screen_x + size, screen_y + size), 
                      color, 
                      thickness)
             cv2.line(overlay_image, 
-                     (x + size, y - size), 
-                     (x - size, y + size), 
+                     (screen_x + size, screen_y - size), 
+                     (screen_x - size, screen_y + size), 
                      color, 
                      thickness)
+            
+            # Add position text showing both coordinate systems
+            text = f"Failed at - Viewport: ({position[0]}, {position[1]}) | Screen: ({screen_x}, {screen_y})"
+            cv2.putText(
+                overlay_image,
+                text,
+                (screen_x + 10, screen_y - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+                cv2.LINE_AA
+            )
             
             return overlay_image
         except Exception as e:

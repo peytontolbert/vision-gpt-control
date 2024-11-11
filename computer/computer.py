@@ -28,15 +28,15 @@ class Computer(multiprocessing.Process):
     def run(self):
         # Initialize non-picklable objects here
         load_dotenv()  # Load environment variables from .env file
-        self.screen = Screen()
         self.audio = Audio()
         self.microphone = Microphone()
         self.apps = {
-            "browser": Browser(audio=self.audio, microphone=self.microphone, screen=self.screen),
+            "browser": Browser(),
             "discord": None  # Will be initialized after browser
         }
-        self.mouse = Mouse(target=self.apps["browser"], screen=self.screen, movement_speed=1.0)
-        self.keyboard = Keyboard(target=self.apps["browser"], screen=self.screen)
+        self.screen = None
+        self.mouse = None
+        self.keyboard = None
         # Initialize Discord with environment variables
         discord_user = os.getenv("DISCORD_USER")
         discord_pass = os.getenv("DISCORD_PASS")
@@ -64,18 +64,22 @@ class Computer(multiprocessing.Process):
             if not self.apps["browser"].webdriver:
                 raise Exception("Browser WebDriver not initialized")
                 
+            # Launch Discord
+            if not self.launch_app("discord"):
+                logging.error("Failed to launch Discord")
+            time.sleep(3)
+            self.screen = Screen(browser=self.apps["browser"])
+            self.screen.initialize()
+            self.mouse = Mouse(browser=self.apps["browser"], screen=self.screen, movement_speed=1.0)
+            self.keyboard = Keyboard(target=self.apps["browser"], screen=self.screen)
+            # Initialize core components
+            self.audio.initialize() 
+            self.microphone.initialize()
             # Ensure screen is receiving frames
             if not self.screen.get_current_frame():
                 logging.warning("Screen not receiving frames, checking connection...")
                 self.apps["browser"].set_screen(self.screen)
                 
-            # Launch Discord
-            if not self.launch_app("discord"):
-                logging.error("Failed to launch Discord")
-            # Initialize core components
-            self.screen.initialize()
-            self.audio.initialize() 
-            self.microphone.initialize()
             
             # Position the mouse at the center of the screen
             center_x = self.screen.width // 2

@@ -91,7 +91,7 @@ class ManagerAgent(BaseAgent):
         Returns:
             bool: True if the action was successful, False otherwise.
         """
-        prompt = f"Based on the provided overlay image, determine if the mouse was in the correct position.\nExpected state: {expected_prompt}. Reply with yes or no"
+        prompt = f"Based on the provided overlay image, determine if the mouse is in the correct position.\nExpected state: {expected_prompt}. Reply with yes or no"
         response = self.text_agent.complete_task({
             "query": prompt,
             "image": overlay_image

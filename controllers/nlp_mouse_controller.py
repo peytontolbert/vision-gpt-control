@@ -128,99 +128,94 @@ class NLPMouseController:
     def execute_command(self, command: str) -> bool:
         """
         Execute a machine-readable movement command with action verification.
-        
-        Args:
-            command: Movement command in natural language or formatted form
-            
-        Returns:
-            bool: True if movement and action were executed successfully
         """
-        logging.debug(f"Executing command: {command}")
+        if not command:
+            logging.error("Received empty command")
+            return False
         
-        retry_attempts = 0
-        max_retries = self.max_regeneration_attempts
-
-        while retry_attempts < max_retries:
-            # Format the command if it's not already formatted
-            if not self.command_formatter.validate_command(command):
-                formatted_command = self.command_formatter.format_command(command)
-                if not formatted_command:
-                    logging.error(f"Failed to format command: {command}")
-                    
-                    # Attempt to regenerate the command using TextAgent
-                    new_command = self._regenerate_command()
-                    if new_command and self.command_formatter.validate_command(new_command):
-                        logging.info(f"Regenerated command: {new_command}")
-                        command = new_command
-                        retry_attempts += 1
-                        continue
-                    else:
-                        logging.error("Failed to regenerate a valid command.")
-                        return False  # Exit if regeneration fails
-                else:
-                    logging.debug(f"Formatted command: {formatted_command}")
-                    command = formatted_command
-
-            parsed = self.parse_command(command)
-            if not parsed:
-                logging.error(f"Failed to parse command: {command}")
-                return False
-                        
-            x, y, action = parsed
-
-            logging.debug(f"Parsed command coordinates: ({x}, {y}), Action: {action}")
-
-            # Clamp coordinates
-            x = max(0, min(x, self.CUSTOM_VIEWPORT_WIDTH))
-            y = max(0, min(y, self.CUSTOM_VIEWPORT_HEIGHT))
-            logging.debug(f"Clamped coordinates to viewport bounds: ({x}, {y})")
-
-            # Move the mouse to the target position within viewport
-            success = self.mouse.move_to(x, y)
+        # Handle simple click command
+        if command.strip().lower() == "click":
+            return self.mouse.click()
+        
+        parsed = self.parse_command(command)
+        if not parsed:
+            logging.error(f"Failed to parse command: {command}")
+            return False
+        
+        x, y, action = parsed
+        
+        # For move commands, validate coordinates
+        if "move to" in command.lower():
+            # Get viewport dimensions
+            viewport_width, viewport_height = self.mouse.browser.get_viewport_size()
+            
+            # Get scroll position
+            scroll_x, scroll_y = self.mouse.browser.get_scroll_position()
+            
+            # Adjust coordinates for viewport and scroll
+            target_x = x - scroll_x
+            target_y = y - scroll_y
+            
+            # Scale coordinates if needed
+            scale_x = viewport_width / self.screen.width
+            scale_y = viewport_height / self.screen.height
+            
+            viewport_x = int(target_x * scale_x)
+            viewport_y = int(target_y * scale_y)
+            
+            # Log coordinate transformation
+            logging.debug(f"Original coords: ({x}, {y})")
+            logging.debug(f"Adjusted for scroll: ({target_x}, {target_y})")
+            logging.debug(f"Scaled to viewport: ({viewport_x}, {viewport_y})")
+            
+            # Move the mouse with position verification
+            success = self.mouse.move_to(viewport_x, viewport_y)
             if not success:
-                logging.error(f"Failed to move mouse to ({x}, {y})")
-                retry_attempts += 1
-                continue  # Retry movement
+                logging.error(f"Failed to move mouse to ({viewport_x}, {viewport_y})")
+                return False
+            
+            # Verify position after movement
+            time.sleep(0.5)  # Short delay for movement completion
+            actual_pos = self.mouse.get_position()
+            tolerance = 5  # 5 pixel tolerance
+            
+            # Scale actual position back for comparison
+            actual_x = int(actual_pos[0] / scale_x) + scroll_x
+            actual_y = int(actual_pos[1] / scale_y) + scroll_y
+            
+            if abs(actual_x - x) > tolerance or abs(actual_y - y) > tolerance:
+                logging.error(f"Position verification failed. Target: ({x}, {y}), Actual: ({actual_x}, {actual_y})")
+                return False
+        
+        # Execute click if specified
+        if action == "click":
+            if not self.mouse.click():
+                logging.error("Click action failed")
+                return False
+            
+        return True
 
-            # Verify mouse position within viewport
-            if not self._verify_location(x, y):
-                logging.error(f"Mouse not at the expected position after moving to ({x}, {y})")
-                retry_attempts += 1
-                continue  # Retry movement
-
-            # Optional: Add a short delay to ensure the UI has time to respond to the mouse movement
-            time.sleep(0.5)
-                        
-            if action:
-                logging.debug(f"Executing action: {action}")
-                action_success = False
-                if action == "click":
-                    action_success = self.mouse.click()
-                elif action == "double-click":
-                    action_success = self.mouse.double_click()
-                elif action == "right-click":
-                    action_success = self.mouse.right_click()
-                else:
-                    logging.error(f"Unknown action: {action}")
-                    return False
-                
-                if not action_success:
-                    logging.error(f"Failed to execute {action} action at ({x}, {y})")
-                    retry_attempts += 1
-                    continue  # Retry action
-
-                logging.debug(f"Action '{action}' executed successfully at ({x}, {y})")
-                
-                # Verify the click action
-                if not self._verify_click_success(x, y):
-                    logging.error(f"Click action not verified at ({x}, {y})")
-                    retry_attempts += 1
-                    continue  # Retry action verification
-
-            return True  # Successfully executed command
-
-        logging.error(f"Exceeded maximum retries ({max_retries}) for command: {command}")
-        return False
+    def _execute_action(self, action: str, x: int, y: int) -> bool:
+        """Execute a mouse action and verify its success."""
+        logging.debug(f"Executing action: {action}")
+        
+        success = False
+        if action == "click":
+            success = self.mouse.click()
+        elif action == "double-click":
+            success = self.mouse.click(double=True)
+        elif action == "right-click":
+            success = self.mouse.click(button='right')
+        else:
+            logging.error(f"Unknown action: {action}")
+            return False
+        
+        if not success:
+            logging.error(f"Failed to execute {action} action at ({x}, {y})")
+            return False
+            
+        logging.debug(f"Action '{action}' executed successfully at ({x}, {y})")
+        return self._verify_click_success(x, y)
 
     def _verify_click_success(self, x: int, y: int) -> bool:
         """
@@ -306,10 +301,18 @@ class NLPMouseController:
         Returns:
             bool: True if the mouse is at the specified location, False otherwise.
         """
-        current_x, current_y = self.mouse.get_position()
-        if (current_x, current_y) == (x, y):
+        current_pos = self.mouse.get_position()
+        current_x, current_y = current_pos
+        
+        # Add tolerance for position verification (e.g., within 2 pixels)
+        tolerance = 2
+        x_match = abs(current_x - x) <= tolerance
+        y_match = abs(current_y - y) <= tolerance
+        
+        if x_match and y_match:
             logging.info(f"Mouse successfully moved to ({x}, {y}).")
             return True
+        
         logging.warning(f"Mouse position after move is ({current_x}, {current_y}), expected ({x}, {y}).")
         return False
 
@@ -453,6 +456,12 @@ class NLPMouseController:
         Returns:
             Optional[Tuple[int, int, Optional[str]]]: Parsed x, y coordinates and an optional action.
         """
+        # Handle simple click command
+        if command.strip().lower() == "click":
+            current_pos = self.mouse.get_position()
+            return (current_pos[0], current_pos[1], "click")
+        
+        # Handle move commands
         match = re.fullmatch(r"move to \(\s*(\d+)\s*,\s*(\d+)\s*\)(?:\s+and\s+(click|double-click|right-click))?", command.lower())
         if match:
             x = int(match.group(1))
