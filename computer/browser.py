@@ -3,7 +3,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
 import time
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import os
 
 class BrowserController:
@@ -47,12 +47,18 @@ class BrowserController:
 
     def move_mouse_to(self, x, y):
         """Move the virtual mouse to the specified coordinates within the browser."""
+        print(f" window dimensions: {self.window_width}x{self.window_height}")
+        print(f" last mouse position: {self.last_mouse_position}")
+        if self.last_mouse_position is None:
+            # If this is the first movement, set the initial position as the current (0, 0)
+            self.last_mouse_position = (0, 0)
         if 0 <= x <= self.window_width and 0 <= y <= self.window_height:
             # Move to the coordinates within the browser window
-            self.actions.move_by_offset(x, y).perform()
+            offset_x = x - self.last_mouse_position[0]
+            offset_y = y - self.last_mouse_position[1]
+            self.actions.move_by_offset(offset_x, offset_y).perform()
             self.last_mouse_position = (x, y)
-            print(f" window dimensions: {self.window_width}x{self.window_height}")
-            self.take_screenshot(f"screenshot_{x}_{y}.png")
+            self.take_screenshot(f"images/screenshot_{x}_{y}.png")
             print(f"Moved mouse to ({x}, {y}) within the browser window.")
             self.last_mouse_position = (x, y)  # Update mouse position
         else:
@@ -64,8 +70,8 @@ class BrowserController:
         self.actions.click().perform()
         print(f"Clicked at ({x}, {y}) within the browser window.")
 
-    def take_screenshot(self, filename="screenshot.png"):
-        """Take a screenshot of the browser, save it, and overlay the coordinate system and mouse position."""
+    def take_screenshot(self, filename="images/screenshot.png"):
+        """Take a screenshot of the browser, save it, and overlay an enhanced coordinate system with a mouse position."""
         # Take a screenshot using WebDriver
         self.driver.save_screenshot(filename)
         print(f"Screenshot saved as {filename}")
@@ -75,19 +81,46 @@ class BrowserController:
             image = Image.open(filename)
             draw = ImageDraw.Draw(image)
 
-            # Draw grid lines for the coordinate system
-            grid_spacing = 50  # distance in pixels between each grid line
+            # Set up parameters for overlay
+            grid_spacing = 50  # Distance in pixels between each grid line
+            quadrant_color = (0, 200, 0)  # Color for quadrant labels
+            grid_color = (150, 150, 150)  # Light gray color for grid lines
+            radial_color = (0, 100, 255)  # Blue for radial distance markers
+            text_color = "black"
+            
+            # Load a font for better readability (optional)
+            try:
+                font = ImageFont.truetype("arial.ttf", 15)
+            except IOError:
+                font = None  # Fall back to default if the font is not available
 
-            # Draw vertical grid lines
+            # Draw vertical and horizontal grid lines
             for x in range(0, self.window_width, grid_spacing):
-                line_color = (150, 150, 150)  # light gray color for grid lines
-                draw.line((x, 0, x, self.window_height), fill=line_color, width=1)
-                draw.text((x + 2, 2), str(x), fill="black")  # Label the x-axis coordinates
+                draw.line((x, 0, x, self.window_height), fill=grid_color, width=1)
+                # Label x-axis coordinates
+                label = f"{x}"
+                draw.text((x + 2, 2), label, fill=text_color, font=font)
 
-            # Draw horizontal grid lines
             for y in range(0, self.window_height, grid_spacing):
-                draw.line((0, y, self.window_width, y), fill=line_color, width=1)
-                draw.text((2, y + 2), str(y), fill="black")  # Label the y-axis coordinates
+                draw.line((0, y, self.window_width, y), fill=grid_color, width=1)
+                # Label y-axis coordinates
+                label = f"{y}"
+                draw.text((2, y + 2), label, fill=text_color, font=font)
+
+            # Add quadrant labels
+            center_x, center_y = self.window_width // 2, self.window_height // 2
+            quadrant_labels = [("Q1", center_x + 20, center_y - 20),  # Top-right
+                            ("Q2", center_x - 50, center_y - 20),  # Top-left
+                            ("Q3", center_x - 50, center_y + 20),  # Bottom-left
+                            ("Q4", center_x + 20, center_y + 20)]  # Bottom-right
+            for label, qx, qy in quadrant_labels:
+                draw.text((qx, qy), label, fill=quadrant_color, font=font)
+
+            # Draw concentric radial distance markers around the center
+            for radius in range(100, min(self.window_width, self.window_height) // 2, 100):
+                draw.ellipse((center_x - radius, center_y - radius, center_x + radius, center_y + radius),
+                            outline=radial_color, width=1)
+                draw.text((center_x + radius + 5, center_y), f"{radius}px", fill=text_color, font=font)
 
             # Overlay the mouse position if available
             if self.last_mouse_position:
@@ -99,14 +132,16 @@ class BrowserController:
                     fill='red',
                     outline='black'
                 )
+                # Label the mouse position with coordinates
+                draw.text((mouse_x + 15, mouse_y), f"({mouse_x}, {mouse_y})", fill="red", font=font)
                 print(f"Mouse overlay added at ({mouse_x}, {mouse_y})")
 
-            # Save the image with the coordinate overlay
+            # Save the image with the enhanced overlay
             image.save(filename)
-            print(f"Coordinate grid and mouse overlay added to {filename}")
+            print(f"Enhanced coordinate grid, radial markers, quadrants, and mouse overlay added to {filename}")
         except Exception as e:
-            print(f"Error overlaying coordinate system on screenshot: {e}")
-
+            print(f"Error overlaying enhanced coordinate system on screenshot: {e}")
+            
     def close(self):
         """Close the browser."""
         self.driver.quit()
