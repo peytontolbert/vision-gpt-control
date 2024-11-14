@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 
 class BrowserController:
-    def __init__(self, window_width=800, window_height=600):
+    def __init__(self, window_width=1000, window_height=1000):
         # Configure Edge WebDriver
         edge_options = Options()
         edge_options.add_argument(f"--window-size={window_width},{window_height}")
@@ -106,21 +106,6 @@ class BrowserController:
                 # Label y-axis coordinates
                 label = f"{y}"
                 draw.text((2, y + 2), label, fill=text_color, font=font)
-
-            # Add quadrant labels
-            center_x, center_y = self.window_width // 2, self.window_height // 2
-            quadrant_labels = [("Q1", center_x + 20, center_y - 20),  # Top-right
-                            ("Q2", center_x - 50, center_y - 20),  # Top-left
-                            ("Q3", center_x - 50, center_y + 20),  # Bottom-left
-                            ("Q4", center_x + 20, center_y + 20)]  # Bottom-right
-            for label, qx, qy in quadrant_labels:
-                draw.text((qx, qy), label, fill=quadrant_color, font=font)
-
-            # Draw concentric radial distance markers around the center
-            for radius in range(100, min(self.window_width, self.window_height) // 2, 100):
-                draw.ellipse((center_x - radius, center_y - radius, center_x + radius, center_y + radius),
-                            outline=radial_color, width=1)
-                draw.text((center_x + radius + 5, center_y), f"{radius}px", fill=text_color, font=font)
 
             # Overlay the mouse position if available
             if self.last_mouse_position:
