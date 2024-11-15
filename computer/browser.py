@@ -2,12 +2,13 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 import time
 from PIL import Image, ImageDraw, ImageFont
 import os
 
 class BrowserController:
-    def __init__(self, window_width=1000, window_height=1000):
+    def __init__(self, window_width=800, window_height=600):
         # Configure Edge WebDriver
         edge_options = Options()
         edge_options.add_argument(f"--window-size={window_width},{window_height}")
@@ -16,13 +17,23 @@ class BrowserController:
         # Wait for the browser to open
         time.sleep(2)
         
-        # Get the actual window dimensions (for accurate mouse movements)
-        self.window_width = self.driver.execute_script("return window.innerWidth")
-        self.window_height = self.driver.execute_script("return window.innerHeight")
-        self.actions = ActionChains(self.driver)
-        self.last_mouse_position = None  # Initialize mouse position tracking
+        # Store both viewport and screenshot dimensions
+        self.viewport_width = self.driver.execute_script("return window.innerWidth")
+        self.viewport_height = self.driver.execute_script("return window.innerHeight")
+        # Calculate the difference between window and viewport size
+        width_diff = window_width - self.viewport_width
+        height_diff = window_height - self.viewport_height
         
-        print(f"Initialized browser with dimensions: {self.window_width}x{self.window_height}")
+        # Adjust window size to account for the difference
+        self.driver.set_window_size(window_width + width_diff, window_height + height_diff)
+        
+        self.screenshot_width = 1008    
+        self.screenshot_height = 1008
+        
+        self.actions = ActionChains(self.driver)
+        self.last_mouse_position = None
+        
+        print(f"Initialized browser with viewport dimensions: {self.viewport_width}x{self.viewport_height}")
 
     def navigate(self, url):
         """Navigate to a specified URL."""
@@ -47,12 +58,12 @@ class BrowserController:
 
     def move_mouse_to(self, x, y):
         """Move the virtual mouse to the specified coordinates within the browser."""
-        print(f" window dimensions: {self.window_width}x{self.window_height}")
+        print(f" window dimensions: {self.viewport_width}x{self.viewport_height}")
         print(f" last mouse position: {self.last_mouse_position}")
         if self.last_mouse_position is None:
             # If this is the first movement, set the initial position as the current (0, 0)
             self.last_mouse_position = (0, 0)
-        if 0 <= x <= self.window_width and 0 <= y <= self.window_height:
+        if 0 <= x <= self.viewport_width and 0 <= y <= self.viewport_height:
             # Move to the coordinates within the browser window
             offset_x = x - self.last_mouse_position[0]
             offset_y = y - self.last_mouse_position[1]
@@ -70,65 +81,160 @@ class BrowserController:
         self.actions.click().perform()
         print(f"Clicked at ({x}, {y}) within the browser window.")
 
-    def take_screenshot(self, filename="images/screenshot.png"):
-        """Take a screenshot of the browser, save it, and overlay an enhanced coordinate system with a mouse position."""
-        # Take a screenshot using WebDriver
-        self.driver.save_screenshot(filename)
-        print(f"Screenshot saved as {filename}")
+    def normalize_coordinates(self, x, y, from_screenshot=True):
+        """
+        Convert coordinates between screenshot (1000x1000) and viewport spaces.
+        
+        Args:
+            x (float): X coordinate
+            y (float): Y coordinate
+            from_screenshot (bool): If True, convert from screenshot to viewport.
+                                  If False, convert from viewport to screenshot.
+        
+        Returns:
+            tuple: (normalized_x, normalized_y)
+        """
+        if from_screenshot:
+            # Convert from 1000x1000 screenshot space to viewport space
+            normalized_x = (x * self.viewport_width) / self.screenshot_width
+            normalized_y = (y * self.viewport_height) / self.screenshot_height
+            print(f"Converting screenshot ({x}, {y}) -> viewport ({normalized_x}, {normalized_y})")
+        else:
+            # Convert from viewport space to 1000x1000 screenshot space
+            normalized_x = (x * self.screenshot_width) / self.viewport_width
+            normalized_y = (y * self.screenshot_height) / self.viewport_height
+            print(f"Converting viewport ({x}, {y}) -> screenshot ({normalized_x}, {normalized_y})")
+        
+        return normalized_x, normalized_y
 
+    def take_screenshot(self, filename="images/screenshot.png"):
+        """Take a screenshot and overlay coordinate system scaled to 1000x1000."""
+        # Take the screenshot
+        self.driver.save_screenshot(filename)
+        
         try:
-            # Open the screenshot and prepare for drawing
+            # Open and resize the screenshot to 1000x1000
             image = Image.open(filename)
             draw = ImageDraw.Draw(image)
 
-            # Set up parameters for overlay
-            grid_spacing = 50  # Distance in pixels between each grid line
-            quadrant_color = (0, 200, 0)  # Color for quadrant labels
-            grid_color = (150, 150, 150)  # Light gray color for grid lines
-            radial_color = (0, 100, 255)  # Blue for radial distance markers
-            text_color = "black"
-            
-            # Load a font for better readability (optional)
             try:
                 font = ImageFont.truetype("arial.ttf", 15)
             except IOError:
-                font = None  # Fall back to default if the font is not available
-
-            # Draw vertical and horizontal grid lines
-            for x in range(0, self.window_width, grid_spacing):
-                draw.line((x, 0, x, self.window_height), fill=grid_color, width=1)
-                # Label x-axis coordinates
-                label = f"{x}"
-                draw.text((x + 2, 2), label, fill=text_color, font=font)
-
-            for y in range(0, self.window_height, grid_spacing):
-                draw.line((0, y, self.window_width, y), fill=grid_color, width=1)
-                # Label y-axis coordinates
-                label = f"{y}"
-                draw.text((2, y + 2), label, fill=text_color, font=font)
-
+                font = None
+            
             # Overlay the mouse position if available
             if self.last_mouse_position:
-                mouse_x, mouse_y = self.last_mouse_position
-                mouse_size = 10  # Size of the mouse cursor overlay
-                # Draw a red circle at the mouse position
+                # Draw viewport coordinates in red
+                viewport_x, viewport_y = self.last_mouse_position
+                mouse_size = 10
                 draw.ellipse(
-                    (mouse_x - mouse_size, mouse_y - mouse_size, mouse_x + mouse_size, mouse_y + mouse_size),
+                    (viewport_x - mouse_size, viewport_y - mouse_size, 
+                     viewport_x + mouse_size, viewport_y + mouse_size),
                     fill='red',
                     outline='black'
                 )
-                # Label the mouse position with coordinates
-                draw.text((mouse_x + 15, mouse_y), f"({mouse_x}, {mouse_y})", fill="red", font=font)
-                print(f"Mouse overlay added at ({mouse_x}, {mouse_y})")
+                draw.text((viewport_x + 15, viewport_y), 
+                         f"Viewport: ({int(viewport_x)}, {int(viewport_y)})", 
+                         fill="red", 
+                         font=font)
+                
+                # Draw screenshot coordinates in blue
+                screenshot_x, screenshot_y = self.normalize_coordinates(
+                    viewport_x, 
+                    viewport_y, 
+                    from_screenshot=False
+                )
+                draw.ellipse(
+                    (screenshot_x - mouse_size, screenshot_y - mouse_size, 
+                     screenshot_x + mouse_size, screenshot_y + mouse_size),
+                    fill='blue',
+                    outline='black'
+                )
+                draw.text((screenshot_x + 15, screenshot_y + 25), 
+                         f"Screenshot: ({int(screenshot_x)}, {int(screenshot_y)})", 
+                         fill="blue", 
+                         font=font)
 
-            # Save the image with the enhanced overlay
+            image = image.resize((self.screenshot_width, self.screenshot_height))
+            # Save the modified screenshot
             image.save(filename)
-            print(f"Enhanced coordinate grid, radial markers, quadrants, and mouse overlay added to {filename}")
+            print(f"Enhanced screenshot saved with viewport and screenshot coordinates at {filename}")
         except Exception as e:
-            print(f"Error overlaying enhanced coordinate system on screenshot: {e}")
-            
+            print(f"Error processing screenshot: {e}")
+
     def close(self):
         """Close the browser."""
         self.driver.quit()
         print("Browser closed.")
+
+    def type_text(self, text):
+        """Type text into the currently focused element."""
+        try:
+            actions = ActionChains(self.driver)
+            actions.send_keys(text)
+            actions.perform()
+            print(f"Typed text")
+            time.sleep(0.5)  # Small delay after typing
+        except Exception as e:
+            print(f"Error typing text: {e}")
+
+    def press_key(self, key):
+        """Press a specific key (e.g., Enter, Tab, etc.)."""
+        try:
+            actions = ActionChains(self.driver)
+            actions.send_keys(getattr(Keys, key.upper()))
+            actions.perform()
+            print(f"Pressed key: {key}")
+            time.sleep(0.5)  # Small delay after key press
+        except Exception as e:
+            print(f"Error pressing key: {e}")
+
+    def click_and_type(self, x, y, text):
+        """Click at coordinates and type text."""
+        self.click_at(x, y)
+        time.sleep(0.5)  # Wait for click to register
+        self.type_text(text)
+
+    def scroll_down(self, amount=300):
+        """
+        Scroll the page down by the specified amount of pixels.
+        Args:
+            amount (int): Number of pixels to scroll down. Default is 300.
+        """
+        try:
+            self.driver.execute_script(f"window.scrollBy(0, {amount});")
+            print(f"Scrolled down {amount} pixels")
+            time.sleep(0.5)  # Small delay after scrolling
+            self.take_screenshot()  # Take a screenshot after scrolling
+        except Exception as e:
+            print(f"Error scrolling down: {e}")
+
+    def scroll_up(self, amount=300):
+        """
+        Scroll the page up by the specified amount of pixels.
+        Args:
+            amount (int): Number of pixels to scroll up. Default is 300.
+        """
+        try:
+            self.driver.execute_script(f"window.scrollBy(0, -{amount});")
+            print(f"Scrolled up {amount} pixels")
+            time.sleep(0.5)  # Small delay after scrolling
+            self.take_screenshot()  # Take a screenshot after scrolling
+        except Exception as e:
+            print(f"Error scrolling up: {e}")
+
+    def scroll_to_element(self, element_text):
+        """
+        Scroll to make an element with specific text visible.
+        Args:
+            element_text (str): The text of the element to scroll to
+        """
+        try:
+            element = self.driver.find_element(By.LINK_TEXT, element_text)
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+            print(f"Scrolled to element with text: {element_text}")
+            time.sleep(0.5)  # Small delay after scrolling
+            self.take_screenshot()  # Take a screenshot after scrolling
+        except Exception as e:
+            print(f"Error scrolling to element: {e}")
 
