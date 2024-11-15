@@ -1,101 +1,104 @@
-# Browser Class Documentation
+# Browser Controller Documentation
 
-## Overview
-The Browser class provides a high-level interface for controlling a web browser using Selenium WebDriver. It handles browser automation, screen capture, and mouse/keyboard interactions.
+The `BrowserController` class provides a high-level interface for automated browser control using Selenium WebDriver with Microsoft Edge. It includes functionality for mouse movement, clicking, typing, scrolling, and taking screenshots.
 
-## Key Features
-- Headless/GUI browser operation
-- Screen capture and frame buffering
-- Mouse and keyboard event handling
-- Element interaction and navigation
-- Viewport management
+## Initialization
+```python
+browser = BrowserController(window_width=800, window_height=600)
+```
 
-## Important Size Considerations
-There are two different size measurements to be aware of:
 
-### Viewport Size
-The viewport size is the visible browser area (976x732 by default). This is what you'll use for:
-- Mouse coordinates
-- Element positioning
-- Window dimensions
-
-### Screenshot Size
-The actual screenshot capture size is smaller than the viewport (952x596 by default) due to browser UI elements and internal rendering. This affects:
-- Captured frame dimensions
-- Image processing operations
-- Screen analysis
+The constructor initializes an Edge WebDriver instance with specified window dimensions. It automatically adjusts for viewport differences and sets up action chains for mouse control.
 
 ## Core Methods
 
-### Initialization
-```python
-browser = Browser(headless=True, window_size=(976, 732))  # Sets viewport size
-browser.launch() # Returns bool indicating success
-```
-
 ### Navigation
 ```python
-browser.navigate(url) # Navigate to URL
-browser.wait_until_loaded() # Wait for page load
+browser.navigate(url)
 ```
+
+Navigates to the specified URL and waits for the page to load.
 
 ### Mouse Control
 ```python
-browser.move_mouse(x, y) # Move mouse to coordinates within viewport
-browser.click_mouse(button='left') # Click mouse (left/right/middle)
+browser.move_mouse_to(x, y)
+browser.click_at(x, y)
 ```
 
-### Keyboard Control
+- `move_mouse_to`: Moves the virtual mouse cursor to specified coordinates
+- `click_at`: Moves to coordinates and performs a click action
+
+### Element Location
 ```python
-browser.type_text(text) # Type text
-browser.press_key(key) # Press key
-browser.release_key(key) # Release key
+x, y = browser.locate_element_by_text("Click me")
 ```
+Finds an element by its link text and returns its center coordinates.
 
-### Element Interaction
+### Text Input
 ```python
-element = browser.find_element(selector, timeout=None)
-browser.is_field_active(field_id) # Check if input field is active
+browser.type_text("Hello World")
+browser.press_key("ENTER")
+browser.click_and_type(x, y, "Hello World")
 ```
 
-### Screen Capture
+- `type_text`: Types text at the current cursor position
+- `press_key`: Simulates a keyboard key press
+- `click_and_type`: Combines clicking and typing in one operation
+
+### Scrolling
 ```python
-frame = browser.get_current_frame() # Get current browser frame as PIL Image (952x596)
-viewport = browser.get_viewport_size() # Get viewport dimensions (976x732)
-rect = browser.get_window_rect() # Get browser window dimensions
+browser.scroll_down(amount=300)
+browser.scroll_up(amount=300)
+browser.scroll_to_element("Element text")
 ```
 
-## Integration with Mouse and Screen
-- The Browser class provides mouse position tracking that syncs with the Mouse class
-- Screen captures are automatically synchronized with the Screen class
-- Mouse movements and clicks are translated to browser-native actions
-- Keyboard events are passed directly to the active browser element
+- `scroll_down`: Scrolls the page down by specified pixels
+- `scroll_up`: Scrolls the page up by specified pixels
+- `scroll_to_element`: Scrolls until the specified element is visible
 
-## Size-Related Methods
+### Screenshot Management
 ```python
-# Get viewport dimensions (976x732)
-width, height = browser.get_viewport_size()
-
-# Get screenshot dimensions (952x596)
-frame = browser.get_current_frame()
-width, height = frame.size
-
-# Get window position and size
-x, y, width, height = browser.get_window_rect()
+browser.take_screenshot("images/screenshot.png")
 ```
+
+Takes a screenshot and enhances it with:
+- Current viewport coordinates (red)
+- Screenshot coordinates (blue)
+- Coordinate system overlay
+- Automatic resizing to 1008x1008 pixels
+
+### Coordinate System
+```python
+viewport_x, viewport_y = browser.normalize_coordinates(screenshot_x, screenshot_y, from_screenshot=True)
+screenshot_x, screenshot_y = browser.normalize_coordinates(viewport_x, viewport_y, from_screenshot=False)
+```
+
+Converts coordinates between screenshot space (1008x1008) and viewport space.
+
+### Cleanup
+```python
+browser.close()
+```
+
+Properly closes the browser and WebDriver instance.
+
+## Important Notes
+
+1. The browser window is automatically adjusted to account for differences between window and viewport sizes.
+2. Screenshots are automatically enhanced with coordinate overlays for debugging.
+3. All mouse movements are tracked and validated against viewport boundaries.
+4. Most actions include built-in delays to ensure proper page loading and action completion.
+5. Coordinate systems are maintained in both viewport and screenshot spaces (1008x1008).
 
 ## Error Handling
-- All methods return boolean success indicators
-- Errors are logged with detailed messages
-- Automatic cleanup on failure
-- Graceful degradation when features are unavailable
 
-## Best Practices
-1. Always check return values for operation success
-2. Use wait_until_loaded() after navigation
-3. Verify element presence before interaction
-4. Clean up resources with browser.close()
-5. Handle exceptions for browser automation failures
-6. Be aware of the difference between viewport and screenshot sizes when working with coordinates or image processing
-7. Use viewport size for mouse movements and element interactions
-8. Use screenshot size when working with captured frames
+Most methods include try-except blocks and will:
+- Print error messages when operations fail
+- Continue execution when possible
+- Provide meaningful feedback for debugging
+
+## Dependencies
+
+- Selenium WebDriver
+- PIL (Python Imaging Library)
+- Microsoft Edge WebDriver
